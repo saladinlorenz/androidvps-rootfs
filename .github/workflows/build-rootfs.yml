@@ -47,9 +47,9 @@ jobs:
       - name: Pack
         run: |
           sudo rm -f rootfs/usr/sbin/policy-rc.d
-          tar --numeric-owner -cf - -C rootfs . | nice gzip -1 > rootfs.tar.gz
+          sudo tar --numeric-owner -cf - -C rootfs . | nice gzip -1 > rootfs.tar.gz
           ls -lh rootfs.tar.gz
-          du -sh rootfs
+          sudo du -sh rootfs
 
       - uses: actions/upload-artifact@v4
         with:
