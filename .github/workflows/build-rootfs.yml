@@ -1,0 +1,59 @@
+name: build-rootfs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install qemu + debootstrap (arm64 chroot on x86 runner)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static binfmt-support debootstrap
+
+      - name: debootstrap Debian bookworm arm64
+        run: |
+          sudo debootstrap --arch=arm64 --variant=minbase bookworm rootfs http://deb.debian.org/debian
+
+      - name: Prepare chroot (DNS, mounts, policy-rc.d)
+        run: |
+          sudo rm -f rootfs/etc/resolv.conf
+          sudo cp /etc/resolv.conf rootfs/etc/resolv.conf
+          printf '#!/bin/sh\nexit 101\n' | sudo tee rootfs/usr/sbin/policy-rc.d >/dev/null
+          sudo chmod +x rootfs/usr/sbin/policy-rc.d
+          sudo mount --bind /dev rootfs/dev
+          sudo mount -t proc proc rootfs/proc
+          sudo mount -t sysfs sysfs rootfs/sys
+
+      - name: Install packages inside rootfs
+        run: |
+          PKGS=$(grep -vE '^\s*(#|$)' rootfs-packages.txt | tr '\n' ' ')
+          echo "Installing: $PKGS"
+          sudo chroot rootfs /bin/sh -c "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $PKGS"
+          sudo chroot rootfs /bin/sh -c "apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*"
+          echo "DEBIAN_PACKAGES_V2: baked-in" | sudo tee rootfs/.packages-v2 >/dev/null
+
+      - name: Unmount
+        if: always()
+        run: |
+          sudo umount rootfs/proc || true
+          sudo umount rootfs/sys || true
+          sudo umount rootfs/dev || true
+
+      - name: Pack
+        run: |
+          sudo rm -f rootfs/usr/sbin/policy-rc.d
+          tar --numeric-owner -cf - -C rootfs . | nice gzip -1 > rootfs.tar.gz
+          ls -lh rootfs.tar.gz
+          du -sh rootfs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rootfs
+          path: rootfs.tar.gz
+          if-no-files-found: error
+          compression-level: 0
